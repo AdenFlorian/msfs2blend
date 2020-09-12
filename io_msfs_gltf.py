@@ -47,6 +47,7 @@ from bpy.types import Operator, AddonPreferences
 STRUCT_INDEX = struct.Struct('H')
 STRUCT_VEC2 = struct.Struct('ee')
 STRUCT_VEC3 = struct.Struct('fff')
+STRUCT_VEC4 = struct.Struct('bbbb')
 
 converted_normal_images = set()
 
@@ -82,6 +83,7 @@ def get_indices(accessor_indices, buffer_indices) -> list:
 def read_primitive(gltf, buffer, selected):
     attributes = selected['attributes']
 
+    accessor_normal = gltf['accessors'][attributes['NORMAL']]
     accessor_pos = gltf['accessors'][attributes['POSITION']]
     accessor_texcoord_0 = gltf['accessors'][attributes['TEXCOORD_0']]
     accessor_texcoord_1 = gltf['accessors'][attributes['TEXCOORD_1']]
@@ -95,6 +97,8 @@ def read_primitive(gltf, buffer, selected):
 
     indices = get_indices(accessor_indices, buffer_indices)
 
+    normal_starts = get_start_indices(
+        accessor_normal, buffer_view_data['byteStride'])
     pos_starts = get_start_indices(
         accessor_pos, buffer_view_data['byteStride'])
     texcoord_0_starts = get_start_indices(
@@ -102,6 +106,9 @@ def read_primitive(gltf, buffer, selected):
     texcoord_1_starts = get_start_indices(
         accessor_texcoord_1, buffer_view_data['byteStride'])
 
+    normal_values = [
+        STRUCT_VEC4.unpack(buffer_data[i:i + STRUCT_VEC4.size])
+        for i in normal_starts]
     pos_values = [
         STRUCT_VEC3.unpack(buffer_data[i:i + STRUCT_VEC3.size])
         for i in pos_starts]
@@ -112,7 +119,7 @@ def read_primitive(gltf, buffer, selected):
         STRUCT_VEC2.unpack(buffer_data[i:i + STRUCT_VEC2.size])
         for i in texcoord_1_starts]
 
-    return indices, pos_values, texcoord_0_values, texcoord_1_values
+    return indices, normal_values, pos_values, texcoord_0_values, texcoord_1_values
 
 
 def as_tris(indices, pos_values, texcoord_values):
@@ -130,10 +137,11 @@ def as_tris(indices, pos_values, texcoord_values):
     return pos_tris, texcoord_tris
 
 
-def fill_mesh_data(buffer, gltf, gltf_mesh, uv0, uv1, b_mesh, mat_mapping, report):
+def fill_mesh_data(buffer, gltf, gltf_mesh, uv0, uv1, uv2, b_mesh, mat_mapping, report):
+    print('fill_mesh_data ' + gltf_mesh['name'])
     idx_offset = 0
     primitives = gltf_mesh['primitives']
-    idx, pos, tc0, tc1 = read_primitive(gltf, buffer, primitives[0])
+    idx, nor, pos, tc0, tc1 = read_primitive(gltf, buffer, primitives[0])
 
     for p in pos:
         # converting to blender z up world
@@ -184,6 +192,9 @@ def fill_mesh_data(buffer, gltf, gltf_mesh, uv0, uv1, b_mesh, mat_mapping, repor
                 loop[uv0].uv = (u, 1 - v)
                 u, v = tc1[face_indices[i]]
                 loop[uv1].uv = (u, 1 - v)
+                # loop.vert.normal = nor[face_indices[i]][0:3]
+                loop.vert.normal = (1,2,3)
+                loop[uv2].uv = (nor[face_indices[i]][3], 0)
 
 
 def create_meshes(buffer, gltf, materials, report):
@@ -208,9 +219,10 @@ def create_meshes(buffer, gltf, materials, report):
         b_mesh = bmesh.new()
         uv0 = b_mesh.loops.layers.uv.new()
         uv1 = b_mesh.loops.layers.uv.new()
+        uv2 = b_mesh.loops.layers.uv.new()
 
         try:
-            fill_mesh_data(buffer, gltf, gltf_mesh, uv0, uv1, b_mesh, mat_mapping,
+            fill_mesh_data(buffer, gltf, gltf_mesh, uv0, uv1, uv2, b_mesh, mat_mapping,
                            report)
         except Exception:
             mesh_name = gltf_mesh['name']
